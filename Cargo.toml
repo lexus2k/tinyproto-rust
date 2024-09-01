@@ -1,0 +1,14 @@
+[package]
+name = "tinyproto"
+version = "1.0.0"
+edition = "2021"
+
+# [build]
+# profiler = true
+
+[lib]
+name = "tinyproto"
+path = "src/lib.rs"
+
+[dependencies]
+
