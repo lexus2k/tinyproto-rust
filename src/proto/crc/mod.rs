@@ -27,11 +27,11 @@
 */
 
 const INITCHECKSUM8: u8 = 0x00;
-const GOODCHECKSUM8: u8 = 0x00;
+pub const GOODCHECKSUM8: u8 = 0x00;
 const PPPINITFCS16: u16 = 0xffff;
-const PPPGOODFCS16: u16 = 0xf0b8 ^ 0xffff;
+pub const PPPGOODFCS16: u16 = 0xf0b8 ^ 0xffff;
 const PPPINITFCS32: u32 = 0xffffffff;
-const PPPGOODFCS32: u32 = 0xdebb20e3 ^ 0xffffffff;
+pub const PPPGOODFCS32: u32 = 0xdebb20e3 ^ 0xffffffff;
 
 
 static FCSTAB_16:[u16; 256] = [

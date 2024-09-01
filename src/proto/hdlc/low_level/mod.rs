@@ -27,9 +27,9 @@
 */
 
 use crate::proto::crc;
-use core::cmp::min;
-use std::thread::sleep;
-use std::time::Duration;
+// use core::cmp::min;
+// use std::thread::sleep;
+// use std::time::Duration;
 
 /** Byte to fill gap between frames */
 const TINY_HDLC_FILL_BYTE: u8 = 0xFF;
@@ -250,9 +250,6 @@ impl Rx {
         (0, ResultT::Success)
     }
 
-    fn rx_state_idle(&mut self, _data: *const u8, _len: isize) -> (isize, ResultT) {
-        (0, ResultT::Success)
-    }
 }
 
 
@@ -478,6 +475,14 @@ impl Hdlc {
 
     pub fn put(&mut self, data: *const u8, len: usize) -> ResultT {
         self.tx.put(data, len)
+    }
+
+    pub fn run_rx(&mut self, data: *const u8, len: isize, error: &mut ResultT) -> isize {
+        self.rx.run_rx(data, len, error)
+    }
+
+    pub fn run_tx(&mut self, data: *mut u8, len: isize) -> isize {
+        self.tx.run_tx(data, len)
     }
 }
 
