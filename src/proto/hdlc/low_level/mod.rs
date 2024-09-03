@@ -27,24 +27,24 @@
 */
 
 use crate::proto::crc;
-use core::cmp::min;
 // use std::thread::sleep;
 // use std::time::Duration;
 
 /** Byte to fill gap between frames */
 const TINY_HDLC_FILL_BYTE: u8 = 0xFF;
+/** Escape character */
 const TINY_HDLC_ESCAPE_CHAR: u8 = 0x7D;
+/** Escape bit */
 const TINY_HDLC_ESCAPE_BIT: u8 = 0x20;
+/** Start or end of frame */
 const TINY_HDLC_FLAG_SEQUENCE: u8 = 0x7E;
 
 pub trait RxProcessor {
-    fn on_frame_read(&mut self, _pdata: *mut u8, _size: usize) {
-    }
+    fn on_frame_read(&mut self, _pdata: *mut u8, _size: usize);
 }
 
 pub trait TxProcessor {
-    fn on_frame_send(&mut self, _pdata: *const u8, _size: usize) {
-    }
+    fn on_frame_send(&mut self, _pdata: *const u8, _size: usize);
 }
 
 /**
@@ -74,7 +74,7 @@ struct Rx {
     crc_type: crc::HdlcCrcT,
     phys_mtu: isize,
     // state function for RX part
-    state: fn(&mut Rx, *const u8, isize) -> (isize, ResultT),
+    state: fn(&mut Rx, *const u8, usize) -> (isize, ResultT),
     // data being processed
     data: *mut u8,
     // escape character variable
@@ -122,7 +122,7 @@ impl Rx {
         self.reset();
     }
 
-    pub fn run_rx(&mut self, data: *const u8, len: isize, error: &mut ResultT) -> isize {
+    pub fn run_rx(&mut self, data: *const u8, len: usize, error: &mut ResultT) -> isize {
         let mut result = 0;
         let mut ptr : *const u8 = data;
         let mut _len = len;
@@ -137,13 +137,13 @@ impl Rx {
                 break;
             }
             ptr = unsafe { ptr.offset(temp_result as isize) };
-            _len -= temp_result;
+            _len -= temp_result as usize;
             result += temp_result;
         }
         result
     }
 
-    fn read_start(&mut self, _data: *const u8, _len: isize) -> (isize, ResultT) {
+    fn read_start(&mut self, _data: *const u8, _len: usize) -> (isize, ResultT) {
         if _len == 0 {
             return (0, ResultT::Success);
         }
@@ -160,7 +160,7 @@ impl Rx {
         (1, ResultT::Success)
     }
 
-    fn read_data(&mut self, _data: *const u8, _len: isize) -> (isize, ResultT) {
+    fn read_data(&mut self, _data: *const u8, _len: usize) -> (isize, ResultT) {
         let mut result = 0;
         let mut ptr = _data;
         let mut len = _len;
@@ -189,7 +189,7 @@ impl Rx {
         (result, ResultT::Success)
     }
 
-    fn read_end(&mut self, _data: *const u8, _len: isize) -> (isize, ResultT) {
+    fn read_end(&mut self, _data: *const u8, _len: usize) -> (isize, ResultT) {
         if self.data == self.frame_buf {
             // Impossible, maybe frame alignment is wrong, go to read data again
             self.escape = false;
@@ -283,16 +283,16 @@ impl Tx {
         }
     }
 
-    pub fn put(&mut self, data: *const u8, len: usize) -> ResultT {
+    pub fn put(&mut self, data: &[u8]) -> ResultT {
         if self.send_in_progress == true {
             return ResultT::Busy;
         }
-        if len == 0 {
+        if data.len() == 0 {
             return ResultT::Success;
         }
-        self.origin_data = data;
-        self.data = data;
-        self.len = len as isize;
+        self.origin_data = data.as_ptr();
+        self.data = data.as_ptr();
+        self.len = data.len() as isize;
         self.send_in_progress = true;
         ResultT::Success
     }
@@ -413,10 +413,11 @@ impl Tx {
         sent
     }
 
-    pub fn run_tx(&mut self, data: *mut u8, len: isize) -> isize {
+    pub fn run_tx(&mut self, data: &mut [u8]) -> usize {
+        let len = data.len();
         let mut repeated_empty_data: bool = false;
-        self.out_buffer = data;
-        self.out_buffer_len = len as usize;
+        self.out_buffer = data.as_mut_ptr();
+        self.out_buffer_len = len;
         while self.out_buffer_len > 0 {
             let (result, _error) = (self.state)(self);
             if result < 0 {
@@ -432,7 +433,7 @@ impl Tx {
                 repeated_empty_data = false;
             }
         }
-        len - self.out_buffer_len as isize
+        len - self.out_buffer_len
     }
 
 }
@@ -473,16 +474,20 @@ impl Hdlc {
         self.tx.close();
     }
 
-    pub fn put(&mut self, data: *const u8, len: usize) -> ResultT {
+/*    pub fn put(&mut self, data: *const u8, len: usize) -> ResultT {
         self.tx.put(data, len)
+    }*/
+
+    pub fn put(&mut self, data: &[u8]) -> ResultT {
+        self.tx.put(data)
     }
 
-    pub fn run_rx(&mut self, data: *const u8, len: isize, error: &mut ResultT) -> isize {
+    pub fn run_rx(&mut self, data: *const u8, len: usize, error: &mut ResultT) -> isize {
         self.rx.run_rx(data, len, error)
     }
 
-    pub fn run_tx(&mut self, data: *mut u8, len: isize) -> isize {
-        self.tx.run_tx(data, len)
+    pub fn run_tx(&mut self, data: &mut [u8]) -> usize {
+        self.tx.run_tx(data)
     }
 }
 
@@ -501,6 +506,7 @@ pub fn sub(a: i32, b:i32) -> i32 {
 #[cfg(test)]
 mod unittest {
     use super::*;
+    use std::cmp;
 
     #[test]
     fn test_add() {
@@ -551,22 +557,22 @@ mod unittest {
         let mut tx_processor = TestTxProcessor {};
         let mut tx = Tx::new(&mut tx_processor, crc::HdlcCrcT::HdlcCrcOff);
         let data: [u8; 4] = [0x7F, 0x7E, 0x7D, 0x00];
-        tx.put(data.as_ptr(), data.len());
+        tx.put(&data);
         let mut out_buffer: [u8; 10] = [0; 10];
-        let len = tx.run_tx(out_buffer.as_mut_ptr(), out_buffer.len() as isize);
+        let len = tx.run_tx(&mut out_buffer);
         let expected: [u8; 8] = [0x7E, 0x7F, 0x7D, 0x5E, 0x7D, 0x5D, 0x00, 0x7E];
-        assert_eq!(len, expected.len() as isize, "Special bytes mismatch");
+        assert_eq!(len, expected.len(), "Special bytes mismatch");
         assert_eq!(out_buffer[0..expected.len()], expected, "Arrays are not equal");
 
-        tx.put(data.as_ptr(), data.len());
+        tx.put(&data);
         let mut out_buf_short: [u8; 5] = [0; 5];
         let mut index = 0;
         while index < expected.len() {
-            let len = tx.run_tx(out_buf_short.as_mut_ptr(), out_buf_short.len() as isize);
-            let expected_len = min(expected.len() - index, out_buf_short.len());
-            assert_eq!(len, expected_len as isize, "Length mismatch");
-            assert_eq!(out_buf_short[0..len as usize], expected[index..index + len as usize], "Arrays are not equal");
-            index += len as usize;
+            let len = tx.run_tx(&mut out_buf_short);
+            let expected_len = cmp::min(expected.len() - index, out_buf_short.len());
+            assert_eq!(len, expected_len, "Length mismatch");
+            assert_eq!(out_buf_short[0..len], expected[index..index + len], "Arrays are not equal");
+            index += len;
             if len <= 0 {
                 break;
             }
@@ -583,13 +589,16 @@ mod unittest {
         });
         let mut buffer: [u8; 10] = [0; 10];
         let mut rx = Rx::new(&mut rx_processor, buffer.as_mut_ptr(), buffer.len(), crc::HdlcCrcT::HdlcCrcOff, 0);
-        let data_from_rx: [u8; 8] = [0x7E, 0x7F, 0x7D, 0x5E, 0x7D, 0x5D, 0x00, 0x7E];
+        let data_from_rx: [u8; 9] = [0xFF, 0x7E, 0x7F, 0x7D, 0x5E, 0x7D, 0x5D, 0x00, 0x7E];
         let mut error = ResultT::Error;
-        let len = rx.run_rx(data_from_rx.as_ptr(), data_from_rx.len() as isize, &mut error);
+        let len = rx.run_rx(data_from_rx.as_ptr(), 0, &mut error);
+        assert_eq!(len, 0, "Empty input buffer can cause only 0 len result");
+        rx.run_rx(data_from_rx.as_ptr(), 2, &mut error);
+        rx.reset();
+        let len = rx.run_rx(data_from_rx.as_ptr(), data_from_rx.len(), &mut error);
         assert_eq!(len, data_from_rx.len() as isize, "Length mismatch");
         assert_eq!(error, ResultT::Success, "Error mismatch");
         assert_eq!(rx_processor.get_counter(), 1, "Data not received");
     }
-
 }
 

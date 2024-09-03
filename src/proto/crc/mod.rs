@@ -26,13 +26,6 @@
     For further information contact via email on github account.
 */
 
-const INITCHECKSUM8: u8 = 0x00;
-pub const GOODCHECKSUM8: u8 = 0x00;
-const PPPINITFCS16: u16 = 0xffff;
-pub const PPPGOODFCS16: u16 = 0xf0b8 ^ 0xffff;
-const PPPINITFCS32: u32 = 0xffffffff;
-pub const PPPGOODFCS32: u32 = 0xdebb20e3 ^ 0xffffffff;
-
 
 static FCSTAB_16:[u16; 256] = [
     0x0000, 0x1189, 0x2312, 0x329b, 0x4624, 0x57ad, 0x6536, 0x74bf, 0x8c48, 0x9dc1, 0xaf5a, 0xbed3, 0xca6c, 0xdbe5,
@@ -100,12 +93,14 @@ pub struct Crc32 {
 }
 
 impl Crc8 {
+    const INITCHECKSUM8: u8 = 0x00;
+
     pub fn new() -> Self {
-        Crc8 { crc: INITCHECKSUM8 }
+        Crc8 { crc: Self::INITCHECKSUM8 }
     }
 
     pub fn reset(&mut self) {
-        self.crc = INITCHECKSUM8;
+        self.crc = Self::INITCHECKSUM8;
     }
 
     pub fn sum_byte(&mut self, data: u8) {
@@ -125,13 +120,14 @@ impl Crc8 {
 
 
 impl Crc16 {
+    const PPPINITFCS16: u16 = 0xffff;
 
     pub fn new() -> Self {
-        Crc16 { crc: PPPINITFCS16 }
+        Crc16 { crc: Self::PPPINITFCS16 }
     }
 
     pub fn reset(&mut self) {
-        self.crc = PPPINITFCS16;
+        self.crc = Self::PPPINITFCS16;
     }
 
     pub fn sum_byte(&mut self, data: u8) {
@@ -150,13 +146,14 @@ impl Crc16 {
 }
 
 impl Crc32 {
+    const PPPINITFCS32: u32 = 0xffffffff;
 
     pub fn new() -> Self {
-        Crc32 { crc: PPPINITFCS32 }
+        Crc32 { crc: Self::PPPINITFCS32 }
     }
 
     pub fn reset(&mut self) {
-        self.crc = PPPINITFCS32;
+        self.crc = Self::PPPINITFCS32;
     }
 
     pub fn sum_byte(&mut self, data: u8) {
@@ -193,7 +190,7 @@ pub fn get_crc_field_size(crc_type: HdlcCrcT) -> usize {
        HdlcCrcT::HdlcCrcOff => 0,
        HdlcCrcT::HdlcCrc8 => 1,
        HdlcCrcT::HdlcCrc16 => 2,
-       HdlcCrcT::HdlcCrc32 => 3,
+       HdlcCrcT::HdlcCrc32 => 4,
        _ => 4,
     }
 }
@@ -202,6 +199,9 @@ pub fn get_crc_field_size(crc_type: HdlcCrcT) -> usize {
 #[cfg(test)]
 mod unittest {
     use super::*;
+    const GOODCHECKSUM8: u8 = 0x00;
+    const PPPGOODFCS16: u16 = 0xf0b8 ^ 0xffff;
+    const PPPGOODFCS32: u32 = 0xdebb20e3 ^ 0xffffffff;
 
     #[test]
     fn test_crc32() {
@@ -219,6 +219,8 @@ mod unittest {
         crc.sum_byte(crc32_swap[2]);
         crc.sum_byte(crc32_swap[3]);
         assert_eq!(crc.get(), PPPGOODFCS32);
+        crc.reset();
+        assert_eq!(crc.get(), 0x00000000);
     }
 
     #[test]
@@ -235,6 +237,8 @@ mod unittest {
         crc.sum_byte(crc16_swap[0]);
         crc.sum_byte(crc16_swap[1]);
         assert_eq!(crc.get(), PPPGOODFCS16);
+        crc.reset();
+        assert_eq!(crc.get(), 0x0000);
     }
 
     #[test]
@@ -248,5 +252,16 @@ mod unittest {
         assert_eq!(crc.get(), 0x7f);
         crc.sum_byte(crc.get());
         assert_eq!(crc.get(), GOODCHECKSUM8);
+        crc.reset();
+        assert_eq!(crc.get(), 0xff);
+    }
+
+    #[test]
+    fn test_get_crc_field_size() {
+        assert_eq!(get_crc_field_size(HdlcCrcT::HdlcCrcOff), 0);
+        assert_eq!(get_crc_field_size(HdlcCrcT::HdlcCrc8), 1);
+        assert_eq!(get_crc_field_size(HdlcCrcT::HdlcCrc16), 2);
+        assert_eq!(get_crc_field_size(HdlcCrcT::HdlcCrc32), 4);
+        assert_eq!(get_crc_field_size(HdlcCrcT::HdlcCrcDefault), 4);
     }
 }
