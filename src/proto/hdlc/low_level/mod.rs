@@ -67,6 +67,159 @@ pub enum ResultT {
     WrongCrc,
 }
 
+pub struct HdlcEncoder {
+    crc_type: crc::HdlcCrcT,
+    phys_mtu: isize,
+}
+
+impl HdlcEncoder {
+    pub fn new(_crc_type: crc::HdlcCrcT, _mtu: isize) -> HdlcEncoder {
+        HdlcEncoder {
+            crc_type: _crc_type,
+            phys_mtu: _mtu,
+        }
+    }
+
+    ///
+    /// This function encodes binary data to HDLC frame
+    /// The output buffer should be at least 2 times bigger than input buffer
+    /// The function returns number of bytes written to output buffer
+    ///
+    /// # Arguments
+    /// * `data` - input data to encode
+    /// * `result` - output buffer to store encoded data
+    /// * `result_size` - size of output buffer
+    ///
+    pub fn encode(&self, data: &[u8], result: &mut [u8]) -> usize {
+        let mut result_index = 0;
+        let mut crc: u32 = 0;
+        match self.crc_type {
+            crc::HdlcCrcT::HdlcCrc8 => {
+                let mut crc8 = crc::Crc8::new();
+                crc8.sum_bytes(data, data.len());
+                crc = crc8.get() as u32;
+            }
+            crc::HdlcCrcT::HdlcCrc16 => {
+                let mut crc16 = crc::Crc16::new();
+                crc16.sum_bytes(data, data.len());
+                crc = crc16.get() as u32;
+            }
+            crc::HdlcCrcT::HdlcCrc32 => {
+                let mut crc32 = crc::Crc32::new();
+                crc32.sum_bytes(data, data.len());
+                crc = crc32.get();
+            }
+            _ => {
+            }
+        }
+        result[result_index] = TINY_HDLC_FLAG_SEQUENCE;
+        result_index += 1;
+        for byte in data {
+            if *byte == TINY_HDLC_FLAG_SEQUENCE || *byte == TINY_HDLC_ESCAPE_CHAR {
+                result[result_index] = TINY_HDLC_ESCAPE_CHAR;
+                result[result_index + 1] = *byte ^ TINY_HDLC_ESCAPE_BIT;
+                result_index += 2;
+            } else {
+                result[result_index] = *byte;
+                result_index += 1;
+            }
+        }
+        let crc_size = crc::get_crc_field_size(self.crc_type);
+        for i in 0..crc_size {
+            let byte = (crc >> (i * 8)) as u8;
+            if byte == TINY_HDLC_FLAG_SEQUENCE || byte == TINY_HDLC_ESCAPE_CHAR {
+                result[result_index] = TINY_HDLC_ESCAPE_CHAR;
+                result[result_index + 1] = byte ^ TINY_HDLC_ESCAPE_BIT;
+                result_index += 2;
+            } else {
+                result[result_index] = byte;
+                result_index += 1;
+            }
+        }
+        result[result_index] = TINY_HDLC_FLAG_SEQUENCE;
+        result_index += 1;
+        result_index
+    }
+
+    pub fn encode_to_vec(&self, data: &[u8]) -> Vec<u8> {
+        let mut result: Vec<u8> = Vec::new();
+        result.resize((data.len() + crc::get_crc_field_size(self.crc_type)) * 2 + 2, 0);
+        let size = self.encode(data, &mut result[..]);
+        result.resize(size,0);
+        result
+    }
+
+    pub fn decode(&self, data: &[u8], result:&mut [u8]) -> usize {
+        let mut result_index = 0;
+        let mut escape: bool = false;
+        let mut crc: u32 = 0;
+        let crc_size = crc::get_crc_field_size(self.crc_type);
+        for byte in data {
+            println!("byte: {:X}", *byte);
+            if *byte == TINY_HDLC_FLAG_SEQUENCE {
+                if result_index != 0 {
+                    break;
+                }
+                continue;
+            }
+            if *byte == TINY_HDLC_ESCAPE_CHAR {
+                escape = true;
+                continue;
+            }
+            if escape {
+                escape = false;
+                result[result_index] = *byte ^ TINY_HDLC_ESCAPE_BIT;
+            } else {
+                result[result_index] = *byte;
+            }
+            result_index += 1;
+        }
+        if result_index < crc_size {
+            return 0;
+        }
+        match self.crc_type {
+            crc::HdlcCrcT::HdlcCrc8 => {
+                let mut crc8 = crc::Crc8::new();
+                crc8.sum_bytes(result, result_index - crc_size);
+                crc = crc8.get() as u32;
+            }
+            crc::HdlcCrcT::HdlcCrc16 => {
+                let mut crc16 = crc::Crc16::new();
+                crc16.sum_bytes(result, result_index - crc_size);
+                crc = crc16.get() as u32;
+            }
+            crc::HdlcCrcT::HdlcCrc32 => {
+                let mut crc32 = crc::Crc32::new();
+                crc32.sum_bytes(result, result_index - crc_size);
+                crc = crc32.get();
+            }
+            _ => {
+            }
+        }
+        let mut crc_data: u32 = 0;
+        for i in 0..crc_size {
+            crc_data |= (result[result_index - crc_size + i] as u32) << (i * 8);
+        }
+        if crc != crc_data {
+            // Return empty vector
+            return 0;
+        }
+        // return data without crc
+        // result.truncate(result_index - crc_size);
+        println!("result_index: {}, {}", result_index, crc_size);
+        result_index - crc_size
+    }
+
+    pub fn decode_as_vec(&self, data: &[u8]) -> Vec<u8> {
+        let mut result: Vec<u8> = Vec::new();
+        result.resize(data.len(), 0);
+        let size = self.decode(data, &mut result[..]);
+        println!("size: {}", size);
+        result.resize(size, 0);
+        result
+    }
+}
+
 struct Rx {
     rx_processor: *mut dyn RxProcessor,
     rx_buf: *mut u8,
@@ -251,7 +404,6 @@ impl Rx {
     }
 
 }
-
 
 impl Tx {
     pub fn new(_tx_processor: *mut dyn TxProcessor, _crc: crc::HdlcCrcT) -> Tx {
@@ -599,6 +751,25 @@ mod unittest {
         assert_eq!(len, data_from_rx.len() as isize, "Length mismatch");
         assert_eq!(error, ResultT::Success, "Error mismatch");
         assert_eq!(rx_processor.get_counter(), 1, "Data not received");
+    }
+
+    #[test]
+    fn test_encoder() {
+        let encoder = HdlcEncoder::new(crc::HdlcCrcT::HdlcCrcOff, 0);
+        let data: [u8; 4] = [0x7F, 0x7E, 0x7D, 0x00];
+        let mut encoded = [0; 10];
+        let result = encoder.encode(&data, &mut encoded);
+        let expected: [u8; 8] = [0x7E, 0x7F, 0x7D, 0x5E, 0x7D, 0x5D, 0x00, 0x7E];
+        assert_eq!(result, expected.len(), "Special bytes mismatch");
+        assert_eq!(encoded[0..result], expected, "Arrays are not equal");
+
+        let encoded_vec = encoder.encode_to_vec(&data);
+        assert_eq!(encoded_vec.len(), expected.len(), "Special bytes mismatch");
+        assert_eq!(encoded_vec, expected, "Arrays are not equal");
+
+        let decoded = encoder.decode_as_vec(&encoded);
+        assert_eq!(decoded.len(), data.len(), "Special bytes mismatch");
+        assert_eq!(decoded, data, "Arrays are not equal");
     }
 }
 
