@@ -80,14 +80,24 @@ static FCSTAB_32:[u32; 256] = [
                 0xb40bbe37, 0xc30c8ea1, 0x5a05df1b, 0x2d02ef8d];
 
 
+/// CRC-8 checksum calculator (simple byte-sum).
+///
+/// Computes a one-byte checksum by summing all data bytes.
+/// The final value is `0xFF - sum`.
 pub struct Crc8 {
     crc: u8,
 }
 
+/// CRC-16 (FCS-16) calculator using the CCITT polynomial.
+///
+/// Computes a two-byte CRC used in PPP/HDLC framing.
 pub struct Crc16 {
     crc: u16,
 }
 
+/// CRC-32 (FCS-32) calculator using the standard CRC-32 polynomial.
+///
+/// Computes a four-byte CRC commonly used for high-reliability links.
 pub struct Crc32 {
     crc: u32,
 }
@@ -95,24 +105,29 @@ pub struct Crc32 {
 impl Crc8 {
     const INITCHECKSUM8: u8 = 0x00;
 
+    /// Create a new CRC-8 calculator with the initial checksum value.
     pub fn new() -> Self {
         Crc8 { crc: Self::INITCHECKSUM8 }
     }
 
+    /// Reset the checksum to its initial value.
     pub fn reset(&mut self) {
         self.crc = Self::INITCHECKSUM8;
     }
 
+    /// Feed a single byte into the checksum.
     pub fn sum_byte(&mut self, data: u8) {
         self.crc = self.crc.wrapping_add(data);
     }
 
+    /// Feed `len` bytes from `data` into the checksum.
     pub fn sum_bytes(&mut self, data: &[u8], len: usize) {
         for i in 0..len {
             self.crc = self.crc.wrapping_add(data[i]);
         }
     }
 
+    /// Return the current CRC-8 value.
     pub fn get(&self) -> u8 {
         0xff - self.crc
     }
@@ -122,24 +137,29 @@ impl Crc8 {
 impl Crc16 {
     const PPPINITFCS16: u16 = 0xffff;
 
+    /// Create a new CRC-16 calculator with the PPP initial FCS value.
     pub fn new() -> Self {
         Crc16 { crc: Self::PPPINITFCS16 }
     }
 
+    /// Reset the CRC to its initial value.
     pub fn reset(&mut self) {
         self.crc = Self::PPPINITFCS16;
     }
 
+    /// Feed a single byte into the CRC calculation.
     pub fn sum_byte(&mut self, data: u8) {
         self.crc = (self.crc >> 8) ^ FCSTAB_16[((self.crc as u8 ^ data) & 0xff) as usize];
     }
 
+    /// Feed `len` bytes from `data` into the CRC calculation.
     pub fn sum_bytes(&mut self, data: &[u8], len: usize) {
         for i in 0..len {
             self.crc = (self.crc >> 8) ^ FCSTAB_16[((self.crc as u8 ^ data[i]) & 0xff) as usize];
         }
     }
 
+    /// Return the current CRC-16 value (XORed with 0xFFFF).
     pub fn get(&self) -> u16 {
         self.crc ^ 0xffff
     }
@@ -148,43 +168,50 @@ impl Crc16 {
 impl Crc32 {
     const PPPINITFCS32: u32 = 0xffffffff;
 
+    /// Create a new CRC-32 calculator with the PPP initial FCS value.
     pub fn new() -> Self {
         Crc32 { crc: Self::PPPINITFCS32 }
     }
 
+    /// Reset the CRC to its initial value.
     pub fn reset(&mut self) {
         self.crc = Self::PPPINITFCS32;
     }
 
+    /// Feed a single byte into the CRC calculation.
     pub fn sum_byte(&mut self, data: u8) {
         self.crc = FCSTAB_32[((self.crc as u8 ^ data) & 0xFF) as usize] ^ (self.crc >> 8);
     }
 
+    /// Feed `len` bytes from `data` into the CRC calculation.
     pub fn sum_bytes(&mut self, data: &[u8], len: usize) {
         for i in 0..len {
             self.crc = FCSTAB_32[((self.crc as u8 ^ data[i]) & 0xFF) as usize] ^ (self.crc >> 8);
         }
     }
 
+    /// Return the current CRC-32 value (XORed with 0xFFFFFFFF).
     pub fn get(&self) -> u32 {
         self.crc ^ 0xffffffff
     }
 }
 
+/// Supported CRC modes for HDLC framing.
 #[derive(Clone, Copy, Debug)]
 pub enum HdlcCrcT {
-    ///< If default is specified HDLC will auto select CRC option
+    /// Auto-select CRC option (defaults to CRC-32).
     HdlcCrcDefault,
-    ///< Simple sum of all bytes in user payload
+    /// Simple 8-bit checksum (1 byte).
     HdlcCrc8,
-    ///< CCITT-16
+    /// CCITT CRC-16 / FCS-16 (2 bytes).
     HdlcCrc16,
-    ///< CCITT-32
+    /// CCITT CRC-32 / FCS-32 (4 bytes).
     HdlcCrc32,
-    ///< Disable CRC field
+    /// Disable CRC — no integrity check.
     HdlcCrcOff,
 }
 
+/// Return the size (in bytes) of the CRC field for the given CRC type.
 pub fn get_crc_field_size(crc_type: HdlcCrcT) -> usize {
     match crc_type {
        HdlcCrcT::HdlcCrcOff => 0,

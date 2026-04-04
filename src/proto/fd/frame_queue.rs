@@ -97,11 +97,17 @@ impl FrameQueue {
     }
 
     /// Get the next frame matching the specified type and address.
-    /// For I-frames, `arg` is the frame sequence number to match against position.
-    pub fn get_next(&self, frame_type: QueuedFrameType, address: u8, _arg: u8) -> Option<(usize, &FrameInfo)> {
+    /// For I-frames, `arg` is the N(S) sequence number to match (bits 7-5 of control).
+    pub fn get_next(&self, frame_type: QueuedFrameType, address: u8, arg: u8) -> Option<(usize, &FrameInfo)> {
         for (i, slot) in self.frames.iter().enumerate() {
             if let Some(ref frame) = slot {
                 if frame.frame_type == frame_type && frame.header.address == address {
+                    if frame_type == QueuedFrameType::IFrame {
+                        let frame_ns = (frame.header.control >> 5) & 0x07;
+                        if frame_ns != arg {
+                            continue;
+                        }
+                    }
                     return Some((i, frame));
                 }
             }
@@ -138,6 +144,22 @@ impl FrameQueue {
         }
     }
 
+    /// Free an I-frame slot by matching address and N(S) sequence number.
+    /// N(S) is stored in bits 7-5 of the control byte.
+    pub fn free_by_ns(&mut self, address: u8, ns: u8) {
+        for slot in self.frames.iter_mut() {
+            if let Some(ref frame) = slot {
+                if frame.header.address == address
+                    && frame.frame_type == QueuedFrameType::IFrame
+                    && ((frame.header.control >> 5) & 0x07) == ns
+                {
+                    *slot = None;
+                    return;
+                }
+            }
+        }
+    }
+
     /// Count occupied slots
     pub fn count(&self) -> usize {
         self.frames.iter().filter(|s| s.is_some()).count()
@@ -158,6 +180,7 @@ pub struct FramesQueue {
 }
 
 impl FramesQueue {
+    /// Create a new combined queue with separate I-frame and S/U-frame capacity.
     pub fn new(i_queue_size: usize, s_queue_size: usize, mtu: usize) -> Self {
         FramesQueue {
             i_queue: FrameQueue::new(i_queue_size, mtu),
@@ -165,9 +188,8 @@ impl FramesQueue {
         }
     }
 
+    /// Reset both I-frame and S/U-frame queues.
     pub fn reset(&mut self) {
-        self.i_queue.reset();
-        self.s_queue.reset();
     }
 }
 

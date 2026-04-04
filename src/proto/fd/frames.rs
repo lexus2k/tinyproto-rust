@@ -28,18 +28,22 @@
 
 //! Frame type definitions for FD protocol.
 
-/// HDLC frame header (address + control fields)
+/// HDLC frame header (address + control fields).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FrameHeader {
+    /// HDLC address field (identifies the secondary station).
     pub address: u8,
+    /// HDLC control field (frame type, sequence numbers, P/F bit).
     pub control: u8,
 }
 
 impl FrameHeader {
+    /// Serialize the header to a 2-byte array `[address, control]`.
     pub fn to_bytes(&self) -> [u8; 2] {
         [self.address, self.control]
     }
 
+    /// Parse a header from the first two bytes of `data`, or `None` if too short.
     pub fn from_bytes(data: &[u8]) -> Option<Self> {
         if data.len() < 2 {
             return None;
@@ -51,24 +55,32 @@ impl FrameHeader {
     }
 }
 
-/// Type of queued frame
+/// Type tag for a frame slot in a [`super::frame_queue::FrameQueue`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueuedFrameType {
+    /// Slot is available.
     Free = 0x01,
+    /// Unnumbered frame.
     UFrame = 0x02,
+    /// Supervisory frame.
     SFrame = 0x04,
+    /// Information frame.
     IFrame = 0x08,
 }
 
-/// Information about a queued frame
+/// Metadata and payload for a queued HDLC frame.
 #[derive(Debug, Clone)]
 pub struct FrameInfo {
+    /// The type tag (I, S, U, or Free).
     pub frame_type: QueuedFrameType,
+    /// Address and control bytes.
     pub header: FrameHeader,
+    /// User payload (without header).
     pub payload: Vec<u8>,
 }
 
 impl FrameInfo {
+    /// Create a new `FrameInfo` by copying the payload slice.
     pub fn new(frame_type: QueuedFrameType, header: FrameHeader, payload: &[u8]) -> Self {
         FrameInfo {
             frame_type,
@@ -92,9 +104,11 @@ impl FrameInfo {
     }
 }
 
-/// I-frame specific info (extends FrameInfo with sequence tracking)
+/// I-frame information with peer address tracking.
 #[derive(Debug, Clone)]
 pub struct IFrameInfo {
+    /// The underlying frame data.
     pub frame: FrameInfo,
+    /// HDLC address of the peer this frame belongs to.
     pub peer_address: u8,
 }

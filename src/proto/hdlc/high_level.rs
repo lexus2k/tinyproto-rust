@@ -37,8 +37,9 @@ use crate::proto::crc::HdlcCrcT;
 use std::sync::{Mutex, Condvar, Arc};
 use std::time::{Duration, Instant};
 
-/// Callback type for frame events
+/// Callback invoked when a frame is received. Receives the frame payload.
 type OnFrameReadCb = Box<dyn FnMut(&[u8]) + Send>;
+/// Callback invoked when a frame has been fully sent. Receives the original payload.
 type OnFrameSendCb = Box<dyn FnMut(&[u8]) + Send>;
 
 /// Event bits for internal synchronization
@@ -396,5 +397,46 @@ mod tests {
         hdlc.reset();
         // Should be able to send again after reset
         hdlc.send(&[4, 5, 6], 0, None).unwrap();
+    }
+
+    #[test]
+    fn test_hdlc_multiple_frames() {
+        let mut tx_hdlc = Hdlc::new(&HdlcConfig {
+            crc_type: HdlcCrcT::HdlcCrc16,
+            rx_buf_size: 256,
+            ..Default::default()
+        }).unwrap();
+
+        let mut rx_hdlc = Hdlc::new(&HdlcConfig {
+            crc_type: HdlcCrcT::HdlcCrc16,
+            rx_buf_size: 256,
+            ..Default::default()
+        }).unwrap();
+
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let received_clone = received.clone();
+        rx_hdlc.set_on_frame_read(move |data: &[u8]| {
+            received_clone.lock().unwrap().push(data.to_vec());
+        });
+
+        let payloads: Vec<Vec<u8>> = vec![
+            vec![0x01, 0x02],
+            vec![0x03, 0x04, 0x05],
+            vec![0xAA, 0xBB, 0xCC, 0xDD],
+        ];
+
+        for payload in &payloads {
+            tx_hdlc.send(payload, 0, None).unwrap();
+
+            let mut buf = vec![0u8; 128];
+            let written = tx_hdlc.get_tx_data(&mut buf);
+            rx_hdlc.run_rx(&buf[..written]);
+        }
+
+        let frames = received.lock().unwrap();
+        assert_eq!(frames.len(), 3);
+        for (i, payload) in payloads.iter().enumerate() {
+            assert_eq!(&frames[i], payload);
+        }
     }
 }

@@ -28,6 +28,9 @@
 
 //use std::slice::SliceIndex;
 
+/// A variable-length HDLC frame buffer.
+///
+/// Stores raw frame bytes and supports indexed access.
 pub struct HdlcFrame {
     data: Vec<u8>,
 }
@@ -44,12 +47,14 @@ where
 }
 
 impl HdlcFrame {
+    /// Create an empty frame.
     pub fn new() -> HdlcFrame {
         HdlcFrame {
             data: Vec::new(),
         }
     }
 
+    /// Append a byte to the frame.
     pub fn push(&mut self, byte: u8) {
         self.data.push(byte);
     }

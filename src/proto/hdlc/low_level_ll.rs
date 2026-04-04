@@ -796,4 +796,41 @@ mod tests {
         assert_eq!(result, crate::proto::hdlc::low_level::ResultT::Success);
         assert_eq!(decoded, payload);
     }
+
+    #[test]
+    fn test_all_special_bytes_payload() {
+        let mut tx = create_ll(HdlcCrcT::HdlcCrcOff);
+        let mut rx = create_ll(HdlcCrcT::HdlcCrcOff);
+
+        // Payload that is entirely special bytes (0x7E and 0x7D)
+        let payload = vec![0x7E, 0x7D, 0x7E, 0x7D, 0x7E, 0x7D];
+        tx.put_frame(&payload).unwrap();
+
+        let mut buf = vec![0u8; 128];
+        let written = tx.run_tx(&mut buf);
+        buf.truncate(written);
+
+        // Every byte needs escaping: 6 payload bytes → 12 encoded + 2 flags = 14
+        assert_eq!(written, 14);
+
+        let (consumed, err) = rx.run_rx(&buf);
+        assert_eq!(consumed, written);
+        assert!(err.is_none());
+
+        let frame = rx.get_rx_frame().unwrap();
+        assert_eq!(frame, payload);
+    }
+
+    #[test]
+    fn test_empty_frame() {
+        let mut ll = create_ll(HdlcCrcT::HdlcCrcOff);
+        // put_frame with empty data returns Ok but does nothing
+        let result = ll.put_frame(&[]);
+        assert!(result.is_ok());
+        assert!(!ll.is_tx_busy());
+
+        let mut buf = vec![0u8; 64];
+        let written = ll.run_tx(&mut buf);
+        assert_eq!(written, 0);
+    }
 }

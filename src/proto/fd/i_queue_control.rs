@@ -59,6 +59,7 @@ pub struct IQueueControl {
 }
 
 impl IQueueControl {
+    /// Create a new queue control with all sequence numbers at zero.
     pub fn new() -> Self {
         IQueueControl {
             tx_state: IQueueControlSend {
@@ -115,6 +116,11 @@ impl IQueueControl {
         // Rewind next_ns
         self.tx_state.next_ns = nr;
         on_retransmit(nr)
+    }
+
+    /// Get the next frame sequence number to allocate
+    pub fn get_last_ns(&self) -> u8 {
+        self.tx_state.last_ns
     }
 
     /// Get the next frame sequence number to send
@@ -218,5 +224,49 @@ mod tests {
         assert_eq!(ctrl.get_next_frame_to_receive(), 0);
         ctrl.move_to_next_frame_to_receive();
         assert_eq!(ctrl.get_next_frame_to_receive(), 1);
+    }
+
+    #[test]
+    fn test_retransmit() {
+        let mut ctrl = IQueueControl::new();
+
+        // Allocate and send frames 0, 1, 2
+        for _ in 0..3 {
+            ctrl.move_to_next_ns();
+            ctrl.advance_next_ns();
+        }
+        assert_eq!(ctrl.get_next_frame_to_send(), 3);
+        assert_eq!(ctrl.get_next_frame_to_confirm(), 0);
+
+        // Retransmit from frame 1 — rewinds next_ns to 1
+        let retransmitted = ctrl.retransmit_frame(1, |ns| {
+            assert_eq!(ns, 1);
+            true
+        });
+        assert!(retransmitted);
+        assert_eq!(ctrl.get_next_frame_to_send(), 1);
+
+        // Retransmit at current position is a no-op
+        let retransmitted = ctrl.retransmit_frame(1, |_| true);
+        assert!(!retransmitted);
+    }
+
+    #[test]
+    fn test_move_to_previous_ns() {
+        let mut ctrl = IQueueControl::new();
+
+        ctrl.move_to_next_ns();
+        ctrl.move_to_next_ns();
+        assert_eq!(ctrl.tx_state.last_ns, 2);
+
+        // Undo one allocation
+        ctrl.move_to_previous_ns();
+        assert_eq!(ctrl.tx_state.last_ns, 1);
+
+        // Undo at zero should wrap
+        ctrl.move_to_previous_ns();
+        assert_eq!(ctrl.tx_state.last_ns, 0);
+        ctrl.move_to_previous_ns();
+        assert_eq!(ctrl.tx_state.last_ns, SEQ_BITS_MASK);
     }
 }

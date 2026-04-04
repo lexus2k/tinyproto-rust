@@ -237,4 +237,18 @@ mod tests {
         let received = receiver.read(&mut wire.read_fn()).unwrap();
         assert_eq!(received, payload);
     }
+
+    #[test]
+    fn test_light_timeout_on_empty() {
+        let config = LightConfig {
+            timeout_ms: 50,
+            ..LightConfig::default()
+        };
+        let mut receiver = Light::new(&config).unwrap();
+
+        let wire = FakeWire::new();
+        // No data written to the wire — read should timeout
+        let result = receiver.read(&mut wire.read_fn());
+        assert_eq!(result, Err(TinyError::Timeout));
+    }
 }

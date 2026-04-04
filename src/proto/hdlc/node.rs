@@ -28,24 +28,37 @@
 
 use crate::proto::hdlc::frame::HdlcFrame;
 
+/// Interface for a node in an HDLC processing pipeline.
+///
+/// Nodes can receive frames from upstream and send frames downstream.
 pub trait NodeInterface {
+    /// Register an upstream source node.
     fn add_source(&mut self, source: &Box<dyn NodeInterface>);
+    /// Register a downstream sink node.
     fn add_sink(&mut self, sink: &Box<dyn NodeInterface>);
+    /// Called when a frame is received from the RX direction.
     fn on_rx_frame(&mut self, frame: HdlcFrame);
+    /// Called to transmit a frame in the TX direction.
     fn put_tx_frame(&mut self, frame: HdlcFrame);
 }
 
+/// A linear pipeline of [`NodeInterface`] nodes.
+///
+/// Nodes are chained so that each node's sink is the next node,
+/// and each node's source is the previous node.
 struct Pipeline {
     nodes: Vec<Box<dyn NodeInterface>>,
 }
 
 impl Pipeline {
+    /// Create an empty pipeline.
     pub fn new() -> Pipeline {
         Pipeline {
             nodes: Vec::new(),
         }
     }
 
+    /// Append a node to the pipeline, linking it to the previous node.
     pub fn add_node(&mut self, node: Box<dyn NodeInterface>) {
         self.nodes.push(node);
         if self.nodes.len() > 1 {
@@ -63,10 +76,12 @@ impl Pipeline {
         }
     }
 
+    /// Push an empty frame into the first node for RX processing.
     pub fn run_rx(&mut self) {
         self.nodes[0].on_rx_frame(HdlcFrame::new());
     }
 
+    /// Push an empty frame into the last node for TX processing.
     pub fn run_tx(&mut self) {
         let index = self.nodes.len() - 1;
         self.nodes[index].put_tx_frame(HdlcFrame::new());

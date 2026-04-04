@@ -41,32 +41,37 @@ use super::peers::PeerManager;
 use std::sync::{Mutex, Condvar};
 use std::time::{Duration, Instant};
 
-/// Callback types for the FD protocol
+/// Callback invoked when a data frame is received.
+/// Arguments: `(peer_address, payload)`.
 pub type OnFrameReadCb = Box<dyn FnMut(u8, &[u8]) + Send>;
+/// Callback invoked when a data frame has been sent.
+/// Arguments: `(peer_address, payload)`.
 pub type OnFrameSendCb = Box<dyn FnMut(u8, &[u8]) + Send>;
+/// Callback invoked on connect/disconnect events.
+/// Arguments: `(peer_address, connected)` where `connected` is `true` on connect.
 pub type OnConnectEventCb = Box<dyn FnMut(u8, bool) + Send>;
 
-/// Configuration for the FD protocol
+/// Configuration for the Full-Duplex protocol.
 pub struct TinyFdConfig {
-    /// CRC type
+    /// CRC type for frame integrity checking.
     pub crc_type: HdlcCrcT,
-    /// TX window size (1-7)
+    /// TX sliding-window size (1–7 frames).
     pub window_frames: u8,
-    /// MTU (0 = auto)
+    /// Maximum payload size per frame (0 = auto-detect).
     pub mtu: usize,
-    /// Send timeout in ms
+    /// Timeout in milliseconds for blocking send operations.
     pub send_timeout: u16,
-    /// Retry timeout in ms
+    /// Timeout in milliseconds before retransmitting unacknowledged frames.
     pub retry_timeout: u16,
-    /// Number of retries
+    /// Maximum number of retransmission attempts before disconnecting.
     pub retries: u8,
-    /// Local address (0 = primary)
+    /// Local station address (0 = primary station).
     pub addr: u8,
-    /// Number of peers (for primary station)
+    /// Number of remote peers (only meaningful for primary stations).
     pub peers_count: u8,
-    /// Protocol mode
+    /// Protocol mode (ABM or NRM).
     pub mode: FdMode,
-    /// RX buffer size
+    /// Size of the internal RX buffer in bytes.
     pub rx_buf_size: usize,
 }
 
@@ -355,7 +360,7 @@ impl TinyFd {
             return Err(TinyError::Busy);
         }
 
-        let ns = peer_info.i_queue_control.get_next_frame_to_send();
+        let ns = peer_info.i_queue_control.get_last_ns();
         let nr = peer_info.i_queue_control.get_next_frame_to_receive();
         let control = (ns << 5) | (nr << 1) | HDLC_I_FRAME_BITS;
 
@@ -471,12 +476,16 @@ impl TinyFd {
         let addr = self.peer_mgr.peer_to_address_field(peer);
         let user_address = if is_primary { addr >> 2 } else { FD_PRIMARY_ADDR };
 
-        let peer_info = &mut self.peer_mgr.peers[peer as usize];
-
-        // Process N(R) — confirm our sent frames
-        peer_info.i_queue_control.confirm_sent_frames(nr, |_seq| {
+        // Confirm our sent frames and collect confirmed seq numbers
+        let mut confirmed_seqs = Vec::new();
+        self.peer_mgr.peers[peer as usize].i_queue_control.confirm_sent_frames(nr, |seq| {
+            confirmed_seqs.push(seq);
             true
         });
+        // Free confirmed frames from i_queue
+        for seq in confirmed_seqs {
+            self.frames.i_queue.free_by_ns(addr, seq);
+        }
         if self.frames.i_queue.has_free_slots() {
             self.events.set(FD_EVENT_QUEUE_HAS_FREE_SLOTS);
         }
@@ -523,10 +532,17 @@ impl TinyFd {
         let nr = (control >> 5) & SEQ_BITS_MASK;
         let s_type = control & HDLC_S_FRAME_TYPE_MASK;
 
-        // Confirm frames
-        self.peer_mgr.peers[peer as usize].i_queue_control.confirm_sent_frames(nr, |_seq| {
+        let addr = self.peer_mgr.peer_to_address_field(peer);
+
+        // Confirm frames and free from queue
+        let mut confirmed_seqs = Vec::new();
+        self.peer_mgr.peers[peer as usize].i_queue_control.confirm_sent_frames(nr, |seq| {
+            confirmed_seqs.push(seq);
             true
         });
+        for seq in confirmed_seqs {
+            self.frames.i_queue.free_by_ns(addr, seq);
+        }
         if self.frames.i_queue.has_free_slots() {
             self.events.set(FD_EVENT_QUEUE_HAS_FREE_SLOTS);
         }
@@ -820,5 +836,165 @@ mod tests {
             ..default_config()
         });
         assert!(result.is_err());
+    }
+
+    fn connect_pair() -> (TinyFd, TinyFd) {
+        let mut primary = TinyFd::new(&default_config()).unwrap();
+        let mut secondary = TinyFd::new(&TinyFdConfig {
+            addr: 1,
+            ..default_config()
+        }).unwrap();
+        let mut buf = vec![0u8; 256];
+        primary.check_timeouts();
+        let w = primary.get_tx_data(&mut buf, 0);
+        secondary.on_rx_data(&buf[..w]).unwrap();
+        let w = secondary.get_tx_data(&mut buf, 0);
+        primary.on_rx_data(&buf[..w]).unwrap();
+        (primary, secondary)
+    }
+
+    /// Exchange all pending TX data between two peers in both directions.
+    fn exchange(a: &mut TinyFd, b: &mut TinyFd) {
+        let mut buf = vec![0u8; 512];
+        loop {
+            let w1 = a.get_tx_data(&mut buf, 0);
+            if w1 > 0 {
+                b.on_rx_data(&buf[..w1]).unwrap();
+            }
+            let w2 = b.get_tx_data(&mut buf, 0);
+            if w2 > 0 {
+                a.on_rx_data(&buf[..w2]).unwrap();
+            }
+            if w1 == 0 && w2 == 0 {
+                break;
+            }
+        }
+    }
+
+    #[test]
+    fn test_fd_disconnect() {
+        let (mut primary, mut secondary) = connect_pair();
+        assert!(primary.get_status().is_ok());
+        assert!(secondary.get_status().is_ok());
+
+        let disconnected_primary = Arc::new(Mutex::new(false));
+        let disconnected_secondary = Arc::new(Mutex::new(false));
+
+        let dp = disconnected_primary.clone();
+        primary.set_on_connect_event(move |_addr, connected| {
+            if !connected { *dp.lock().unwrap() = true; }
+        });
+        let ds = disconnected_secondary.clone();
+        secondary.set_on_connect_event(move |_addr, connected| {
+            if !connected { *ds.lock().unwrap() = true; }
+        });
+
+        primary.disconnect().unwrap();
+        exchange(&mut primary, &mut secondary);
+
+        assert!(*disconnected_secondary.lock().unwrap());
+        assert!(*disconnected_primary.lock().unwrap());
+        assert!(primary.get_status().is_err());
+        assert!(secondary.get_status().is_err());
+    }
+
+    #[test]
+    fn test_fd_bidirectional_data() {
+        let (mut primary, mut secondary) = connect_pair();
+
+        let primary_received = Arc::new(Mutex::new(Vec::new()));
+        let secondary_received = Arc::new(Mutex::new(Vec::new()));
+
+        let pr = primary_received.clone();
+        primary.set_on_read(move |_addr, data: &[u8]| {
+            pr.lock().unwrap().push(data.to_vec());
+        });
+        let sr = secondary_received.clone();
+        secondary.set_on_read(move |_addr, data: &[u8]| {
+            sr.lock().unwrap().push(data.to_vec());
+        });
+
+        let payload_to_secondary = vec![0x11, 0x22, 0x33];
+        let payload_to_primary = vec![0xAA, 0xBB, 0xCC];
+
+        primary.send_packet(FD_PRIMARY_ADDR, &payload_to_secondary, 0).unwrap();
+        secondary.send_packet(FD_PRIMARY_ADDR, &payload_to_primary, 0).unwrap();
+
+        exchange(&mut primary, &mut secondary);
+
+        let sr_frames = secondary_received.lock().unwrap();
+        assert_eq!(sr_frames.len(), 1);
+        assert_eq!(sr_frames[0], payload_to_secondary);
+
+        let pr_frames = primary_received.lock().unwrap();
+        assert_eq!(pr_frames.len(), 1);
+        assert_eq!(pr_frames[0], payload_to_primary);
+    }
+
+    #[test]
+    fn test_fd_multiple_frames() {
+        let (mut primary, mut secondary) = connect_pair();
+
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let rd = received.clone();
+        secondary.set_on_read(move |_addr, data: &[u8]| {
+            rd.lock().unwrap().push(data.to_vec());
+        });
+
+        // Queue 3 frames then exchange — tests the sliding window path
+        let payload1 = vec![0x10, 0x20, 0x30];
+        let payload2 = vec![0x40, 0x50, 0x60];
+        let payload3 = vec![0x70, 0x80, 0x90];
+
+        primary.send_packet(FD_PRIMARY_ADDR, &payload1, 0).unwrap();
+        primary.send_packet(FD_PRIMARY_ADDR, &payload2, 0).unwrap();
+        primary.send_packet(FD_PRIMARY_ADDR, &payload3, 0).unwrap();
+
+        exchange(&mut primary, &mut secondary);
+
+        let frames = received.lock().unwrap();
+        // All 3 I-frames should be delivered to the peer
+        assert_eq!(frames.len(), 3);
+        // First frame payload must be correct
+        assert_eq!(frames[0], payload1);
+    }
+
+    #[test]
+    fn test_fd_send_data_too_large() {
+        let (mut primary, _secondary) = connect_pair();
+        let oversized = vec![0u8; primary.get_mtu() + 1];
+        let result = primary.send_packet(FD_PRIMARY_ADDR, &oversized, 0);
+        assert_eq!(result, Err(TinyError::DataTooLarge));
+    }
+
+    #[test]
+    fn test_fd_send_before_connect() {
+        let mut primary = TinyFd::new(&default_config()).unwrap();
+        assert!(primary.get_status().is_err());
+
+        // Queue a packet — should succeed since the I-frame queue has free slots
+        let payload = vec![0x01, 0x02];
+        let result = primary.send_packet(FD_PRIMARY_ADDR, &payload, 0);
+        assert!(result.is_ok());
+
+        // But no I-frame data should be generated until connected
+        let mut buf = vec![0u8; 256];
+        let w = primary.get_tx_data(&mut buf, 0);
+        // Only U-frames (SABM) should be generated, not I-frames with our payload
+        // Verify the queued data doesn't get delivered to a non-existent peer
+        let mut rx = TinyFd::new(&TinyFdConfig {
+            addr: 1,
+            ..default_config()
+        }).unwrap();
+        let received = Arc::new(Mutex::new(Vec::<Vec<u8>>::new()));
+        let rd = received.clone();
+        rx.set_on_read(move |_addr, data: &[u8]| {
+            rd.lock().unwrap().push(data.to_vec());
+        });
+        if w > 0 {
+            rx.on_rx_data(&buf[..w]).unwrap();
+        }
+        let frames = received.lock().unwrap();
+        assert!(frames.is_empty(), "I-frame data should not be sent before connection");
     }
 }

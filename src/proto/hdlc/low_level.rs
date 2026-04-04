@@ -39,22 +39,36 @@ const TINY_HDLC_ESCAPE_BIT: u8 = 0x20;
 /** Start or end of frame */
 const TINY_HDLC_FLAG_SEQUENCE: u8 = 0x7E;
 
+/// Result codes for one-shot HDLC encode/decode operations.
 #[derive(PartialEq, Eq, Debug)]
 pub enum ResultT {
+    /// Operation completed successfully.
     Success,
+    /// Input data is invalid or incomplete.
     InvalidData,
+    /// Generic error.
     Error,
+    /// Encoder/decoder is busy.
     Busy,
+    /// Payload exceeds the configured MTU.
     DataTooLarge,
+    /// CRC verification failed.
     WrongCrc,
 }
 
 
+/// One-shot HDLC encoder/decoder.
+///
+/// Encodes raw data into HDLC-framed bytes (with byte-stuffing and CRC),
+/// and decodes HDLC-framed bytes back into raw payload.
+/// Unlike [`super::low_level_ll::HdlcLl`], this operates on complete
+/// buffers rather than streaming byte-by-byte.
 pub struct HdlcEncoder {
     crc_type: crc::HdlcCrcT,
 }
 
 impl HdlcEncoder {
+    /// Create a new HDLC encoder/decoder with the given CRC type and MTU.
     pub fn new(_crc_type: crc::HdlcCrcT, _mtu: isize) -> HdlcEncoder {
         HdlcEncoder {
             crc_type: _crc_type,
@@ -116,6 +130,11 @@ impl HdlcEncoder {
         ResultT::Success
     }
 
+    /// Decode an HDLC-framed byte stream into a raw payload.
+    ///
+    /// Returns `(bytes_consumed, result)`. On success the decoded payload
+    /// (without CRC) is placed into `result`. The frame must start and end
+    /// with the HDLC flag sequence (`0x7E`).
     pub fn decode(&self, data: &[u8], result:&mut Vec<u8>) -> (usize, ResultT) {
         let mut consumed = 0;
         let mut escape: bool = false;

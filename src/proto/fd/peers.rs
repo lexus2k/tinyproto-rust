@@ -65,6 +65,7 @@ pub struct PeerInfo {
 }
 
 impl PeerInfo {
+    /// Create a new peer with the given HDLC address, initially disconnected.
     pub fn new(addr: u8) -> Self {
         // Initialize timestamps far in the past so initial timeout triggers immediately
         let past = Instant::now() - Duration::from_secs(60);
@@ -214,5 +215,39 @@ mod tests {
         // Should reject frames from unknown
         let peer = pm.address_field_to_peer((5 << 2) | HDLC_E_BIT);
         assert_eq!(peer, HDLC_INVALID_PEER_INDEX);
+    }
+
+    #[test]
+    fn test_primary_multi_peer() {
+        let pm = PeerManager::new(HDLC_PRIMARY_ADDR | HDLC_E_BIT, 3);
+        assert!(pm.is_primary_station());
+        assert_eq!(pm.peers.len(), 3);
+
+        // Each secondary has address (i+1)<<2 | E_BIT
+        for i in 0..3u8 {
+            let expected_addr = ((i + 1) << 2) | HDLC_E_BIT;
+            let peer_idx = pm.address_field_to_peer(expected_addr);
+            assert_eq!(peer_idx, i, "Peer {} should resolve from address 0x{:02X}", i, expected_addr);
+        }
+
+        // Unknown address should return INVALID
+        let peer = pm.address_field_to_peer((10 << 2) | HDLC_E_BIT);
+        assert_eq!(peer, HDLC_INVALID_PEER_INDEX);
+    }
+
+    #[test]
+    fn test_switch_to_next_peer() {
+        let mut pm = PeerManager::new(HDLC_PRIMARY_ADDR | HDLC_E_BIT, 3);
+        assert_eq!(pm.next_peer, 0);
+
+        let next = pm.switch_to_next_peer();
+        assert_eq!(next, 1);
+        let next = pm.switch_to_next_peer();
+        assert_eq!(next, 2);
+        // Should wrap around
+        let next = pm.switch_to_next_peer();
+        assert_eq!(next, 0);
+        let next = pm.switch_to_next_peer();
+        assert_eq!(next, 1);
     }
 }
