@@ -24,20 +24,52 @@
     accordance with the commercial license agreement provided in accordance with
     the terms contained in a written agreement between you and Alexey Dynda.
     For further information contact via email on github account.
-
 */
 
-pub mod proto {
-    pub mod error;
-    pub mod crc;
-    pub mod hdlc {
-        pub mod frame;
-        pub mod node;
-        pub mod low_level;
-        pub mod low_level_ll;
-        pub mod high_level;
+//use std::slice::SliceIndex;
+
+pub struct HdlcFrame {
+    data: Vec<u8>,
+}
+
+impl<Idx> std::ops::Index<Idx> for HdlcFrame
+where
+    Idx: std::slice::SliceIndex<[u8]>,
+{
+    type Output = Idx::Output;
+
+    fn index(&self, index: Idx) -> &Self::Output {
+        &self.data[index]
     }
-    pub mod light;
-    pub mod fd;
+}
+
+impl HdlcFrame {
+    pub fn new() -> HdlcFrame {
+        HdlcFrame {
+            data: Vec::new(),
+        }
+    }
+
+    pub fn push(&mut self, byte: u8) {
+        self.data.push(byte);
+    }
+}
+
+#[cfg(test)]
+mod unittest {
+    use super::*;
+
+    #[test]
+    fn test_frame() {
+        let mut frame = HdlcFrame::new();
+        frame.push(0x7F);
+        frame.push(0x7E);
+        frame.push(0x7D);
+        frame.push(0x00);
+        assert_eq!(frame[0], 0x7F);
+        assert_eq!(frame[1], 0x7E);
+        assert_eq!(frame[2], 0x7D);
+        assert_eq!(frame[3], 0x00);
+    }
 }
 

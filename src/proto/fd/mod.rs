@@ -1,5 +1,5 @@
 /*
-    Copyright 2024 (C) Alexey Dynda
+    Copyright 2024-2026 (C) Alexey Dynda
 
     This file is part of Tiny Protocol Library.
 
@@ -24,20 +24,19 @@
     accordance with the commercial license agreement provided in accordance with
     the terms contained in a written agreement between you and Alexey Dynda.
     For further information contact via email on github account.
-
 */
 
-pub mod proto {
-    pub mod error;
-    pub mod crc;
-    pub mod hdlc {
-        pub mod frame;
-        pub mod node;
-        pub mod low_level;
-        pub mod low_level_ll;
-        pub mod high_level;
-    }
-    pub mod light;
-    pub mod fd;
-}
+//! Full-Duplex protocol module.
+//!
+//! Implements HDLC ABM (Asynchronous Balanced Mode) and NRM (Normal Response Mode)
+//! with I-frames, S-frames, U-frames, sliding window, and connection management.
 
+pub mod defines;
+pub mod frames;
+pub mod frame_queue;
+pub mod i_queue_control;
+pub mod peers;
+pub mod protocol;
+
+pub use protocol::{TinyFd, TinyFdConfig};
+pub use defines::*;

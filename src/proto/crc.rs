@@ -171,7 +171,7 @@ impl Crc32 {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum HdlcCrcT {
     ///< If default is specified HDLC will auto select CRC option
     HdlcCrcDefault,
